@@ -1,7 +1,6 @@
 import asyncio
 import sqlite3
 import logging
-import re
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import (
@@ -13,18 +12,17 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
 # --- КОНФИГ ---
-TOKEN = '538538:AAjGN8rPhv0629d7rPQWIbp10P8KIbRUKmB'
+TOKEN = '8529283906:AAE3QsZ-CNmnWSf-yS33PlZ829eDjvhzok4'
 ADMINS = [8119723042, 8377754197, 8330987864] 
 SUPPORT_LINK = "https://t.me/BOSSI2026"
-CHANNEL_ID = -1003717021572 
-CHANNEL_URL = "https://t.me/ik_126_channel"
+CRYPTO_BOT_USERNAME = "@CryptoBot" # Для вывода
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 # --- БАЗА ДАННЫХ ---
 def db_query(query, params=(), fetchone=False, fetchall=False, commit=False):
-    conn = sqlite3.connect('v23_auto_pay.db')
+    conn = sqlite3.connect('boss_crypto_v25.db')
     cursor = conn.cursor()
     try:
         cursor.execute(query, params)
@@ -41,16 +39,13 @@ def init_db():
         db_query('INSERT OR IGNORE INTO admins (user_id) VALUES (?)', (adm,), commit=True)
 
 # --- СОСТОЯНИЯ ---
-class FSMAdmin(StatesGroup):
-    wait_qr = State(); edit_bal = State(); broadcast = State()
-
 class FSMApp(StatesGroup):
     platform = State(); tariff = State(); phone = State()
 
 class FSMWithdraw(StatesGroup):
     amount = State(); wallet = State()
 
-# --- МЕНЮ ---
+# --- ГЛАВНОЕ МЕНЮ (ИНЛАЙН) ---
 def get_main_inline(uid):
     res = db_query('SELECT balance FROM users WHERE user_id=?', (uid,), fetchone=True)
     bal = res[0] if res else 0
@@ -58,28 +53,30 @@ def get_main_inline(uid):
     
     kb = [
         [InlineKeyboardButton(text=f"💰 Баланс: {bal}$", callback_data="none")],
-        [InlineKeyboardButton(text="📱 Сдать номер", callback_data="app_start"), InlineKeyboardButton(text="💸 Вывод", callback_data="app_withdraw")],
+        [InlineKeyboardButton(text="📱 Сдать номер", callback_data="app_start"), InlineKeyboardButton(text="💸 Вывод (CryptoBot)", callback_data="app_withdraw")],
         [InlineKeyboardButton(text="⏳ Очередь", callback_data="q_start"), InlineKeyboardButton(text="👨‍💻 Поддержка", url=SUPPORT_LINK)]
     ]
-    if uid in adms: kb.append([InlineKeyboardButton(text="⚙️ Админка", callback_data="adm_panel")])
+    if uid in adms:
+        kb.append([InlineKeyboardButton(text="⚙️ Админка", callback_data="adm_panel")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-# --- СТАРТ ---
+# --- ХЕНДЛЕРЫ ---
+
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     db_query('INSERT OR IGNORE INTO users (user_id) VALUES (?)', (message.from_user.id,), commit=True)
-    await message.answer("<b>Добро пожаловать!</b>\nИспользуйте меню под сообщением.", reply_markup=get_main_inline(message.from_user.id))
-    await message.answer("Клавиатура скрыта.", reply_markup=ReplyKeyboardRemove())
+    await message.answer("🏦 <b>Добро пожаловать в сервис!</b>\nВсе выплаты производятся через <b>Crypto Bot</b>.", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Выберите действие:", reply_markup=get_main_inline(message.from_user.id))
 
-# --- ЛОГИКА СДАЧИ НОМЕРА (С ЦЕНАМИ) ---
+# --- СДАЧА НОМЕРА ---
 @dp.callback_query(F.data == "app_start")
 async def app_1(call: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="ВК", callback_data="st_ВК"), InlineKeyboardButton(text="ВЦ", callback_data="st_ВЦ")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")]
     ])
-    await call.message.edit_text("Выберите платформу:", reply_markup=kb)
+    await call.message.edit_text("Выберите платформу для сдачи:", reply_markup=kb)
     await state.set_state(FSMApp.platform)
 
 @dp.callback_query(F.data.startswith("st_"))
@@ -96,14 +93,14 @@ async def app_2(call: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="3$/20мин", callback_data="tr_3.0")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="app_start")]
         ])
-    await call.message.edit_text(f"Выберите тариф для {p}:", reply_markup=kb)
+    await call.message.edit_text(f"Выберите тариф для <b>{p}</b>:", reply_markup=kb)
     await state.set_state(FSMApp.tariff)
 
 @dp.callback_query(F.data.startswith("tr_"))
 async def app_3(call: CallbackQuery, state: FSMContext):
     price = float(call.data.split("_")[1])
     await state.update_data(price=price)
-    await call.message.edit_text("Введите номер телефона:")
+    await call.message.edit_text("📱 <b>Введите номер телефона:</b>\n(Например: +79991234567)")
     await state.set_state(FSMApp.phone)
 
 @dp.message(FSMApp.phone)
@@ -111,78 +108,104 @@ async def app_4(message: Message, state: FSMContext):
     d = await state.get_data()
     db_query('INSERT INTO apps (user_id, platform, tariff, phone, price) VALUES (?,?,?,?,?)', 
              (message.from_user.id, d['platform'], f"{d['price']}$", message.text, d['price']), commit=True)
-    await message.answer("✅ Номер в очереди!", reply_markup=get_main_inline(message.from_user.id))
+    await message.answer(f"✅ Номер {message.text} добавлен в очередь!", reply_markup=get_main_inline(message.from_user.id))
     await state.clear()
 
-# --- ОЧЕРЕДЬ И АВТО-ОПЛАТА ---
+# --- ОЧЕРЕДЬ И АВТО-ЗАЧИСЛЕНИЕ ---
+@dp.callback_query(F.data == "q_start")
+async def q_1(call: CallbackQuery):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Очередь ВК", callback_data="v_ВК"), InlineKeyboardButton(text="Очередь ВЦ", callback_data="v_ВЦ")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")]
+    ])
+    await call.message.edit_text("Какую очередь открыть?", reply_markup=kb)
+
 @dp.callback_query(F.data.startswith("v_"))
 async def q_view(call: CallbackQuery):
     plat = call.data.split("_")[1]
     rows = db_query('SELECT id, tariff, phone FROM apps WHERE platform=?', (plat,), fetchall=True)
-    if not rows: return await call.message.edit_text("Пусто.", reply_markup=get_main_inline(call.from_user.id))
+    if not rows: return await call.message.edit_text(f"Очередь {plat} пуста.", reply_markup=get_main_inline(call.from_user.id))
     await call.message.delete()
     for r in rows:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚀 Взять", callback_data=f"take_{r[0]}")]])
-        await call.message.answer(f"Заявка #{r[0]}\nТариф: {r[1]}\nНомер: {r[2]}", reply_markup=kb)
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚀 Взять в работу", callback_data=f"take_{r[0]}")]])
+        await call.message.answer(f"📦 Заявка #{r[0]}\nТариф: {r[1]}\nНомер: <code>{r[2]}</code>", reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("take_"))
-async def take(call: CallbackQuery, state: FSMContext):
+async def take_logic(call: CallbackQuery, state: FSMContext):
     aid = call.data.split("_")[1]
     res = db_query('SELECT user_id, phone, price, id FROM apps WHERE id=?', (aid,), fetchone=True)
+    if not res: return await call.answer("Уже обработано.")
     uid, phone, price, real_id = res
     await state.update_data(target_user=uid, target_app_id=real_id, price=price)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Подтвердить и Оплатить", callback_data="r_ok")]])
-    await call.message.answer(f"Работа с {phone}. Цена: {price}$", reply_markup=kb)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить (Оплата зачислится)", callback_data="r_ok")],
+        [InlineKeyboardButton(text="❌ Отклонить", callback_data="r_no")]
+    ])
+    await call.message.answer(f"📱 Работа с номером <code>{phone}</code>\nЗа подтверждение юзер получит <b>{price}$</b>", reply_markup=kb)
 
 @dp.callback_query(F.data == "r_ok")
 async def r_ok(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    # Начисляем баланс
+    # АВТОМАТИЧЕСКИЙ ПЛЮС В БАЗУ
     db_query('UPDATE users SET balance = balance + ? WHERE user_id = ?', (data['price'], data['target_user']), commit=True)
-    # Удаляем заявку
     db_query('DELETE FROM apps WHERE id=?', (data['target_app_id'],), commit=True)
     
-    await bot.send_message(data['target_user'], f"✅ <b>Номер принят!</b>\nНа ваш баланс начислено <b>{data['price']}$</b>")
-    await call.message.edit_text(f"✅ Готово. Юзеру зачислено {data['price']}$")
+    await bot.send_message(data['target_user'], f"✅ <b>Номер успешно принят!</b>\nНа ваш баланс зачислено: <b>{data['price']}$</b>\nВывести можно через раздел 'Вывод'.")
+    await call.message.edit_text(f"✅ Готово! Юзеру зачислено {data['price']}$")
     await state.clear()
 
-# --- ВЫВОД СРЕДСТВ ---
+# --- ВЫВОД ЧЕРЕЗ КРИПТОБОТ ---
 @dp.callback_query(F.data == "app_withdraw")
-async def withdraw_1(call: CallbackQuery, state: FSMContext):
+async def wd_1(call: CallbackQuery, state: FSMContext):
     res = db_query('SELECT balance FROM users WHERE user_id=?', (call.from_user.id,), fetchone=True)
     bal = res[0] if res else 0
-    if bal < 1: return await call.answer("Минимальный вывод от 1$", show_alert=True)
-    await call.message.edit_text(f"Твой баланс: {bal}$.\nВведите сумму для вывода:")
+    if bal <= 0: return await call.answer("Недостаточно средств для вывода (0$).", show_alert=True)
+    await call.message.edit_text(f"💰 Ваш баланс: {bal}$.\nВведите сумму для вывода в $:")
     await state.set_state(FSMWithdraw.amount)
 
 @dp.message(FSMWithdraw.amount)
-async def withdraw_2(message: Message, state: FSMContext):
-    await state.update_data(amt=message.text)
-    await message.answer("Введите ваши реквизиты (Карта/Крипта):")
-    await state.set_state(FSMWithdraw.wallet)
+async def wd_2(message: Message, state: FSMContext):
+    try:
+        amt = float(message.text)
+        res = db_query('SELECT balance FROM users WHERE user_id=?', (message.from_user.id,), fetchone=True)
+        if amt > res[0]: return await message.answer("Сумма превышает ваш баланс!")
+        await state.update_data(amt=amt)
+        await message.answer(f"Для получения выплаты пришлите ваш ID в {CRYPTO_BOT_USERNAME} или адрес кошелька:")
+        await state.set_state(FSMWithdraw.wallet)
+    except:
+        await message.answer("Введите число!")
 
 @dp.message(FSMWithdraw.wallet)
-async def withdraw_3(message: Message, state: FSMContext):
-    data = await state.get_data()
+async def wd_3(message: Message, state: FSMContext):
+    d = await state.get_data()
+    # Снимаем баланс сразу (Hold)
+    db_query('UPDATE users SET balance = balance - ? WHERE user_id = ?', (d['amt'], message.from_user.id), commit=True)
+    
     # Уведомляем админов
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Выплачено", callback_data="wd_done")]])
     for adm in ADMINS:
-        try: await bot.send_message(adm, f"🚨 <b>Заявка на вывод!</b>\nЮзер: {message.from_user.id}\nСумма: {data['amt']}$\nРеквизиты: {message.text}")
+        try:
+            await bot.send_message(adm, f"💎 <b>ВЫВОД CRYPTO BOT</b>\nЮзер: <code>{message.from_user.id}</code>\nСумма: <b>{d['amt']}$</b>\nРеквизиты: <code>{message.text}</code>\n\n<i>Отправьте чек в CryptoBot и нажмите кнопку ниже.</i>", reply_markup=kb)
         except: pass
-    await message.answer("✅ Заявка отправлена админаm! Ожидайте выплату.", reply_markup=get_main_inline(message.from_user.id))
+    
+    await message.answer("✅ <b>Заявка принята!</b>\nАдмин отправит вам чек в Crypto Bot в ближайшее время.", reply_markup=get_main_inline(message.from_user.id))
     await state.clear()
 
-# --- КНОПКИ НАВИГАЦИИ ---
-@dp.callback_query(F.data == "q_start")
-async def q_1(call: CallbackQuery):
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="ВК", callback_data="v_ВК"), InlineKeyboardButton(text="ВЦ", callback_data="v_ВЦ")]])
-    await call.message.edit_text("Очереди:", reply_markup=kb)
+@dp.callback_query(F.data == "wd_done")
+async def wd_done(call: CallbackQuery):
+    await call.message.edit_text(call.message.text + "\n\n✅ <b>СТАТУС: ВЫПЛАЧЕНО</b>")
 
 @dp.callback_query(F.data == "back_main")
 async def b_m(call: CallbackQuery):
     await call.message.edit_text("Главное меню:", reply_markup=get_main_inline(call.from_user.id))
 
+# --- ЗАПУСК ---
 async def main():
-    init_db(); logging.basicConfig(level=logging.INFO); await dp.start_polling(bot)
+    init_db()
+    logging.basicConfig(level=logging.INFO)
+    print("Бот запущен на токене 8529283906")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
