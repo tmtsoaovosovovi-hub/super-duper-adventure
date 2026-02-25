@@ -15,7 +15,7 @@ from aiogram.client.default import DefaultBotProperties
 # --- КОНФИГ ---
 TOKEN = '8529283906:AAE3QsZ-CNmnWSf-yS33PlZ829eDjvhzok4'
 # Список ID админов (добавь свои ID сюда)
-ADMINS = [8119723042, 6505777490] 
+ADMINS = [8119723042, 8377754197, 8330987864] 
 SUPPORT_LINK = "https://t.me/BOSSI2026"
 CHANNEL_ID = -1003717021572 
 CHANNEL_URL = "https://t.me/ik_126_channel"
