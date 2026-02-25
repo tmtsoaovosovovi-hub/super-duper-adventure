@@ -24,7 +24,7 @@ dp = Dispatcher()
 
 # --- БАЗА ДАННЫХ ---
 def db_query(query, params=(), fetchone=False, fetchall=False, commit=False):
-    conn = sqlite3.connect('v16_perfect_build.db')
+    conn = sqlite3.connect('v17_final_build.db')
     cursor = conn.cursor()
     try:
         cursor.execute(query, params)
@@ -91,7 +91,7 @@ async def recheck(call: CallbackQuery):
         await call.message.delete(); await call.message.answer("✅ Доступ открыт!", reply_markup=main_kb(call.from_user.id))
     else: await call.answer("❌ Подписка не найдена", show_alert=True)
 
-# --- ЛОГИКА АДМИНКИ (+АДМИН, БАЛАНС, ФОТО) ---
+# --- АДМИНКА ---
 
 @dp.message(F.text == "⚙️ Админка")
 async def adm_panel(message: Message):
@@ -115,26 +115,25 @@ async def adm_add_step2(message: Message, state: FSMContext):
         new_id = int(message.text)
         db_query('INSERT OR IGNORE INTO admins (user_id) VALUES (?)', (new_id,), commit=True)
         await message.answer(f"✅ Пользователь {new_id} добавлен в список админов!")
-    else:
-        await message.answer("❌ Ошибка! ID должен состоять только из цифр.")
+    else: await message.answer("❌ Ошибка! Введите цифры.")
     await state.clear()
 
 @dp.callback_query(F.data == "a_ph")
 async def adm_ph_step1(call: CallbackQuery, state: FSMContext):
-    await call.message.answer("Пришлите новое фото для команды /start:"); await state.set_state(FSMAdmin.photo)
+    await call.message.answer("Пришлите фото для /start:"); await state.set_state(FSMAdmin.photo)
 
 @dp.message(FSMAdmin.photo, F.photo)
 async def adm_ph_step2(message: Message, state: FSMContext):
     db_query('UPDATE settings SET value=? WHERE key="photo"', (message.photo[-1].file_id,), commit=True)
-    await message.answer("✅ Фото успешно обновлено!"); await state.clear()
+    await message.answer("✅ Фото обновлено!"); await state.clear()
 
 @dp.callback_query(F.data == "a_bal")
 async def adm_bal_step1(call: CallbackQuery, state: FSMContext):
-    await call.message.answer("Введите ID пользователя:"); await state.set_state(FSMAdmin.edit_bal_id)
+    await call.message.answer("ID юзера:"); await state.set_state(FSMAdmin.edit_bal_id)
 
 @dp.message(FSMAdmin.edit_bal_id)
 async def adm_bal_step2(message: Message, state: FSMContext):
-    await state.update_data(uid=message.text); await message.answer("Сумма (например 100 или -50):"); await state.set_state(FSMAdmin.edit_bal_sum)
+    await state.update_data(uid=message.text); await message.answer("Сумма:"); await state.set_state(FSMAdmin.edit_bal_sum)
 
 @dp.message(FSMAdmin.edit_bal_sum)
 async def adm_bal_step3(message: Message, state: FSMContext):
@@ -142,10 +141,10 @@ async def adm_bal_step3(message: Message, state: FSMContext):
     try:
         amt = float(message.text)
         db_query('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amt, data['uid']), commit=True)
-        await message.answer(f"✅ Баланс {data['uid']} изменен на {amt} руб."); await state.clear()
-    except: await message.answer("❌ Ошибка! Введите число.")
+        await message.answer(f"✅ Баланс {data['uid']} изменен!"); await state.clear()
+    except: await message.answer("❌ Ошибка суммы.")
 
-# --- ОЧЕРЕДЬ И ВЗАИМОДЕЙСТВИЕ ---
+# --- ОЧЕРЕДЬ ---
 
 @dp.message(F.text == "⏳ Очередь")
 async def q_choice(message: Message):
@@ -182,7 +181,7 @@ async def take_action(call: CallbackQuery, state: FSMContext):
 async def qr_send(message: Message, state: FSMContext):
     data = await state.get_data()
     await bot.send_photo(data['target_user'], message.photo[-1].file_id, caption="📸 <b>Ваш QR-код от админа!</b>")
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="r_ok")], [InlineKeyboardButton(text="❌ Отмена", callback_data="r_no")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Подтвердить", callback_data="r_ok")], [InlineKeyboardButton(text="❌ Отмена", callback_data="r_no")]])
     await message.answer("✅ Отправлено. Управление:", reply_markup=kb)
 
 @dp.callback_query(F.data == "r_code")
@@ -192,20 +191,14 @@ async def r_code(call: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "r_ok")
 async def r_ok(call: CallbackQuery, state: FSMContext):
     data = await state.get_data(); db_query('DELETE FROM apps WHERE id=?', (data['target_app_id'],), commit=True)
-    await bot.send_message(data['target_user'], "✅ Номер принят!"); await call.message.edit_text("✅ Завершено."); await state.clear()
+    await bot.send_message(data['target_user'], "✅ <b>Номер успешно принят! Сейчас админ пополнит вам баланс.</b>")
+    await call.message.edit_text("✅ Завершено."); await state.clear()
 
 @dp.callback_query(F.data == "r_no")
 async def r_no(call: CallbackQuery, state: FSMContext):
-    data = await state.get_data(); await bot.send_message(data['target_user'], "❌ Отказ."); await call.message.edit_text("❌ Отменено."); await state.clear()
+    data = await state.get_data(); await bot.send_message(data['target_user'], "❌ Отказ по номеру."); await call.message.edit_text("❌ Отменено."); await state.clear()
 
-# --- ВЫВОД, СДАЧА НОМЕРА, ПОДДЕРЖКА ---
-
-@dp.message(F.text == "💸 Вывод")
-async def draw(message: Message):
-    res = db_query('SELECT balance FROM users WHERE user_id=?', (message.from_user.id,), fetchone=True)
-    bal = res[0] if res else 0
-    if bal > 0: await message.answer(f"💰 Баланс: {bal} руб.\nПисать: {ADMIN_USER}")
-    else: await message.answer("❌ Баланс 0.")
+# --- СДАЧА НОМЕРА ---
 
 @dp.message(F.text == "📱 Сдать номер")
 async def s_1(message: Message, state: FSMContext):
@@ -215,34 +208,44 @@ async def s_1(message: Message, state: FSMContext):
 @dp.callback_query(F.data.startswith("st_"))
 async def s_2(call: CallbackQuery, state: FSMContext):
     p = call.data.split("_")[1]; await state.update_data(platform=p)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="2/15м", callback_data="tr_2/15м")]] if p=="ВК" else [[InlineKeyboardButton(text="3/20", callback_data="tr_3/20")]])
+    if p == "ВК":
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="2/15м", callback_data="tr_2/15м")], [InlineKeyboardButton(text="1.5/0м", callback_data="tr_1.5/0м")]])
+    else:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="3/20", callback_data="tr_3/20")]])
     await call.message.edit_text("Тариф:", reply_markup=kb); await state.set_state(FSMApp.tariff)
 
 @dp.callback_query(F.data.startswith("tr_"))
 async def s_3(call: CallbackQuery, state: FSMContext):
-    await state.update_data(tariff=call.data.split("_")[1]); await call.message.edit_text("Номер:"); await state.set_state(FSMApp.phone)
+    await state.update_data(tariff=call.data.split("_")[1]); await call.message.edit_text("Введите номер:"); await state.set_state(FSMApp.phone)
 
 @dp.message(FSMApp.phone)
 async def s_4(message: Message, state: FSMContext):
     d = await state.get_data(); db_query('INSERT INTO apps (user_id, platform, tariff, phone) VALUES (?,?,?,?)', (message.from_user.id, d['platform'], d['tariff'], message.text), commit=True)
-    await message.answer("✅ В очереди!", reply_markup=main_kb(message.from_user.id)); await state.clear()
+    await message.answer("✅ Номер в очереди!", reply_markup=main_kb(message.from_user.id)); await state.clear()
+
+# --- ОСТАЛЬНОЕ ---
+
+@dp.message(F.text == "💸 Вывод")
+async def draw(message: Message):
+    res = db_query('SELECT balance FROM users WHERE user_id=?', (message.from_user.id,), fetchone=True)
+    bal = res[0] if res else 0
+    if bal > 0: await message.answer(f"💰 Баланс: {bal} руб.\nПисать: {ADMIN_USER}")
+    else: await message.answer("❌ Баланс 0.")
 
 @dp.message(F.text == "👨‍💻 Поддержка")
-async def supp(message: Message): await message.answer(f"Поддержка: {ADMIN_USER}")
-
-@dp.message(F.text == "📊 Отчет")
-async def rep_1(message: Message, state: FSMContext):
-    await message.answer("Текст отчета:"); await state.set_state(FSMAdmin.broadcast) # Используем как временное
+async def supp(message: Message): await message.answer(f"Связь: {ADMIN_USER}")
 
 @dp.callback_query(F.data == "a_brd")
 async def broad_1(call: CallbackQuery, state: FSMContext):
     await call.message.answer("Текст рассылки:"); await state.set_state(FSMAdmin.broadcast)
+
 @dp.message(FSMAdmin.broadcast)
 async def broad_2(message: Message, state: FSMContext):
-    for u in db_query('SELECT user_id FROM users', fetchall=True):
+    users = db_query('SELECT user_id FROM users', fetchall=True)
+    for u in users:
         try: await bot.send_message(u[0], message.text)
         except: pass
-    await message.answer("✅ Готово!"); await state.clear()
+    await message.answer("✅ Рассылка завершена!"); await state.clear()
 
 async def main():
     init_db(); logging.basicConfig(level=logging.INFO); await dp.start_polling(bot)
